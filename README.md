@@ -1,12 +1,12 @@
 # MAXCC = Multiple Architectures Cross C Compiler
 ```
-MMMMMM        MMMMMMM      AAAAAAAAA      XXXXX       XXXXX     CCCCCCCCCCCCCCC       CCCCCCCCCCCCCCC
-M     M      M      M     A         A      X   X     X   X     C               C     C               C
-M      M    M       M    A     A     A      X   X   X   X     C                C    C                C
-M       M  M        M   A     A A     A      X   X X   X     C       CCCCCCCCCC    C       CCCCCCCCCC
-M        MM         M  A     A   A     A      X   X   X      C      C              C      C
+MMMMMMM       MMMMMMM      AAAAAAAAA      XXXXX       XXXXX     CCCCCCCCCCCCCCC       CCCCCCCCCCCCCCC
+M     M       M     M     A         A      X   X     X   X     C               C     C               C
+M      M     M      M    A     A     A      X   X   X   X     C                C    C                C
+M       M   M       M   A     A A     A      X   X X   X     C       CCCCCCCCCC    C       CCCCCCCCCC
+M        MMM        M  A     A   A     A      X   X   X      C      C              C      C
 M                   M  A    A     A    A       X     X       C     C               C     C
-M    MM      MM     M  A    A     A    A        X   X        C    C                C    C
+M    MM       MM    M  A    A     A    A        X   X        C    C                C    C
 M    M M     M M    M  A    A     A    A       X     X       C     C               C     C
 M    M  M   M  M    M  A    AAAAAAA    A      X   X   X      C      C              C      C
 M    M   MMM   M    M  A    A     A    A     X   X X   X     C       CCCCCCCCCC    C       CCCCCCCCCC
