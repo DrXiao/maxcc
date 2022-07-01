@@ -30,7 +30,6 @@ The current targets of ```maxcc`` are listed as following.
 	* ARM
 	* x86_64
 
-
 ## Advanced targets
 * Self-hosting (self-compiling)
 * Other/advanced C syntax and features
