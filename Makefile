@@ -1,5 +1,5 @@
 CC := gcc
-CFLAGS := -O0 -std=c99
+CFLAGS := -g -O0 -std=c99
 TARGET := maxcc
 TEST_DIR := tests
 TEST := main.c

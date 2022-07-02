@@ -7,11 +7,11 @@
 #include <fcntl.h>
 
 // Compiler flags
-int dump_ir = 1;
+int dump_ir = 0;
 
 
 // Necessary variables
-int src_size = 0;
+int pool_size = 0;
 char *src;
 int line = 1;
 char token;
@@ -21,7 +21,7 @@ char *last_p;
 
 // Supported tokens and classes
 enum {
-	Num = 128, Func, Syscall, Main, Glo, Par, Loc, Keyword, Id, Label, Load, Enter,
+	Num = 128, Func, Syscall, Main, Global, Param, Local, Keyword, Id, Label, Load, Enter,
 	Break, Continue, Case, Char, Default, Else, Enum, If, Int, Return,
 	Sizeof, Struct, Union, Switch, For, While, DoWhile, Goto,
 	Assign,
@@ -31,6 +31,7 @@ enum {
 	Shl, Shr, Add, Sub, Mul, Div, Mod,
 	Inc, Dec, Dot, Arrow, Bracket
 };
+
 
 // Supported instructions (opcodes)
 enum {
@@ -83,6 +84,19 @@ enum {
 	/* 30 31 32 33 34 35 36 37 38 */
 };
 
+enum {CHAR, INT, PTR = 256, PTR2 = 512};
+
+struct idents {
+	int token;
+	int hash;
+	char *name;
+	int class;
+	int type;
+	int val;
+	int hclass;
+	int htype;
+	int hval;
+} *id, *sym;
 
 void err_exit(char *errstr) {
 	fprintf(stderr, "%s", errstr);
@@ -90,19 +104,98 @@ void err_exit(char *errstr) {
 }
 
 void next() {
+	char *id_parser;
+	int hash;
 	while (token = *p) {
 		++p;
-		if (token == '\n') {
+		if ((token >= 'A' && token <= 'Z') || (token >= 'a' && token <= 'z') || (token == '_')) {
+			id_parser = p - 1;
+			hash = token;
+			while ((token >= '0' && token <= '9') || (token >= 'A' && token <= 'Z') || (token >= 'a' && token <= 'z') || (token == '_')) {
+				token = *p;
+				p++;
+				hash = hash * 147 + token;
+			}
+			hash = (hash << 6) + (p - id_parser);
+
+			for (id = sym; id->token; id++) {
+				if (hash == id->hash && !memcmp(id->name, id_parser, p - id_parser)) {
+					token = id->token;
+					return;
+				}
+			}
+
+			printf("%.*s\n", p - id_parser, id_parser);
+			id->name = id_parser;
+			id->hash = hash;
+			token = id->token = Id;
+			return;
+		}
+		else if (token >= '0' && token <= '9') {
+			// parse number literal constant
+		}
+		else if (token == '"' || token == '\'') {
+			// parse character or string
+		}
+		else if (token == '/') {
+		}
+		switch (token) {
+		case '\n':
 			if (dump_ir) {
 				printf("%d: %.*s", line, p - last_p, last_p);
 				last_p = p;
 			}
 			++line;
-		}
-		else if (token == '#') {
+			break;
+		case '#':
+			// skip macro
 			while (*p && *p != '\n') {
 				++p;
 			}
+		case '=':
+		case '+':
+		case '-':
+		case '*':
+			break;
+		case '/':
+			token = *p;
+			++p;
+			if (token == '/') {
+				while (*p && *p != '\n') {
+					++p;
+				}
+			}
+			else if (token == '*') {
+				while (*p && (*(p - 1) != '*' || *p != '/')) {
+					if (*p == '\n');
+						++line;
+					++p;
+				}
+			}
+			else {
+				token = Div;
+				return;
+			}
+			break;
+		case '%':
+		case '!':
+		case '<':
+		case '>':
+		case '|':
+		case '&':
+		case '^':
+		case '[':
+		case '~':
+		case ';':
+		case '{':
+		case '}':
+		case '(':
+		case ')':
+		case ']':
+		case ',':
+		case ':':
+		default:
+			break;
 		}
 	}
 }
@@ -132,8 +225,39 @@ int main(int argc, char **argv) {
 			 "./rvxcc [--dump-ir] <src>\n");
 	}
 
-	src_size = 256 * 1024;
-	src = malloc(src_size);
+	pool_size = 256 * 1024;
+	if (!(src = malloc(pool_size))) {
+		err_exit("couldn't malloc for src\n");
+	}
+	
+	if (!(sym = malloc(pool_size))) {
+		err_exit("couldn't malloc for symbol table\n");
+	}
+
+	memset(src, 0, pool_size);
+	memset(sym, 0, pool_size);
+
+	p = "break continue case char default else enum if int return "
+	    "sizeof struct union switch for while do goto void main "
+	    "open read close printf fprintf malloc memset memcmp exit";
+
+	// C Keywords
+	for (int i = Break; i < Goto; i++) {
+		next();
+	}
+
+	// void
+	next();
+
+	// main
+	next();
+
+	// Syscalls / C std funcs
+	for (int i = OPEN; i < EXIT; i++) {
+		next();
+	}
+	printf("-----------------------------\n");
+
 	while (argc) {
 		int fd = open(*argv, 0);
 		int i = 0;
@@ -142,10 +266,12 @@ int main(int argc, char **argv) {
 			err_exit("couldn't open the source file.\n");
 		}
 
-		if ((i = read(fd, src, src_size - 1)) <= 0) {
+		if ((i = read(fd, src, pool_size - 1)) <= 0) {
 			fprintf(stderr, "err: for source file %s\n", *argv);
 			err_exit("err: unable to read the source file\n");
 		}
+		memset(src, 0, pool_size);
+
 		src[i] = 0;
 		close(fd);
 		last_p = p = src;
@@ -156,6 +282,7 @@ int main(int argc, char **argv) {
 
 	}
 	free(src);
+	free(sym);
 
 	return 0;
 }

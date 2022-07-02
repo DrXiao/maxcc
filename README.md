@@ -18,7 +18,7 @@ MMMMMM         MMMMMM  AAAAAA     AAAAAA  XXXXX       XXXXX     CCCCCCCCCCCCCCC 
 ## Introduction
 The purpose of ```maxcc``` is wanting to be a cross compiler, which can support different architectures.
 
-The current targets of ```maxcc`` are listed as following.
+The current targets of ```maxcc``` are listed as following.
 * Implement **Intermediate Representation (IR)**
 * Generate 32-bit architectures
 * Support basic C syntax
