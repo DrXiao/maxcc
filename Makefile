@@ -7,7 +7,7 @@ TEST := main.c
 $(TARGET): $(TARGET).c
 	$(CC) $(CFLAGS) -o $@ $^
 
-test:
+test: $(TARGET)
 	./$(TARGET) --dump-ir $(TEST_DIR)/$(TEST)
 
 clean:

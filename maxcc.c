@@ -7,14 +7,16 @@
 #include <fcntl.h>
 
 // Compiler flags
-int dump_ir = 0;
+int dump_ir;
 
 
 // Necessary variables
-int pool_size = 0;
+int pool_size;
 char *src;
-int line = 1;
+int line;
 char token;
+int token_num;
+
 char *src;
 char *p;
 char *last_p;
@@ -103,12 +105,19 @@ void err_exit(char *errstr) {
 	exit(1);
 }
 
+
+
+/* 
+ * next() - parse the source code and get the token type;
+ */
+
 void next() {
 	char *id_parser;
 	int hash;
 	while (token = *p) {
 		++p;
 		if ((token >= 'A' && token <= 'Z') || (token >= 'a' && token <= 'z') || (token == '_')) {
+			// parse identifiers
 			id_parser = p - 1;
 			hash = token;
 			while ((token >= '0' && token <= '9') || (token >= 'A' && token <= 'Z') || (token >= 'a' && token <= 'z') || (token == '_')) {
@@ -124,8 +133,6 @@ void next() {
 					return;
 				}
 			}
-
-			printf("%.*s\n", p - id_parser, id_parser);
 			id->name = id_parser;
 			id->hash = hash;
 			token = id->token = Id;
@@ -133,14 +140,84 @@ void next() {
 		}
 		else if (token >= '0' && token <= '9') {
 			// parse number literal constant
+			token_num = token - '0';
+			
+			// beginning with non-zero -> decimal
+			if (token_num > 0) {
+				token = *p;
+				while (token >= '0' && token <= '9') {
+					token_num = token * 10 + token - '0';
+					++p;
+					token = *p;
+				}
+			}
+			// otherwise, binary, octal or hexadecimal
+			else {
+				if (*p == 'b' || *p == 'B') {
+					++p;
+					token = *p;
+					while (token == '0' || token == '1') {
+						token_num = token_num * 2 + token - '0';
+						++p;
+						token = *p;
+					}
+				}
+				else if (*p == 'x' || *p == 'X') {
+					++p;
+					token = *p;
+					while ((token >= '0' && token <= '9') || (token >= 'a' && token <= 'f') || (token >= 'A' && token <= 'F')) {
+						token_num = token_num * 16 + token - '0';
+						++p;
+						token = *p;
+					}
+				}
+				else {
+					token = *p;
+					while (token >= '0' && token <= '7') {
+						token_num = token_num * 8 + token - '0';
+						++p;
+						token = *p;
+					}
+				}
+			}
+			token = Num;
+			return;
 		}
 		else if (token == '"' || token == '\'') {
-			// parse character or string
-		}
-		else if (token == '/') {
+			// parse a character or string
+			while(*p != 0 && *p != token) {
+				token_num = *p++;
+				if (token_num == '\\') {
+					token_num = *p++;
+					switch(token_num) {
+					case 'n':
+						token_num = '\n';
+						break;
+					case 't':
+						token_num = '\t';
+						break;
+					case '0':
+						token_num = '\0';
+						break;
+					}
+				}
+				if (token == '"') {
+					// TODO: copy to .data segment
+				}
+			}
+			p++;
+
+			if (token == '"') {
+				// TODO: assign the address of the string to token_num
+			}
+			else {
+				token = Num;
+			}
+			return;
 		}
 		switch (token) {
 		case '\n':
+			// ignore newline character
 			if (dump_ir) {
 				printf("%d: %.*s", line, p - last_p, last_p);
 				last_p = p;
@@ -152,11 +229,37 @@ void next() {
 			while (*p && *p != '\n') {
 				++p;
 			}
-		case '=':
-		case '+':
-		case '-':
-		case '*':
 			break;
+		case '=':
+			if (*p == '=') {
+				p++;
+				token = Eq;
+			}
+			else {
+				token = Assign;
+			}
+			return;
+		case '+':
+			if (*p == '+') {
+				p++;
+				token = Inc;
+			}
+			else {
+				token = Add;
+			}
+			return;
+		case '-':
+			if (*p == '-') {
+				p++;
+				token = Dec;
+			}
+			else {
+				token = Sub;
+			}
+			return;
+		case '*':
+			token = Mul;
+			return;
 		case '/':
 			token = *p;
 			++p;
@@ -178,13 +281,66 @@ void next() {
 			}
 			break;
 		case '%':
+			token = Mod;
+			return;
 		case '!':
+			if (*p == '=') {
+				p++;
+				token = Ne;
+			}
 		case '<':
+			if (*p == '=') {
+				p++;
+				token = Le;
+			}
+			else if (*p == '<') {
+				p++;
+				token = Shl;
+			}
+			else {
+				token = Lt;
+			}
+			return;
 		case '>':
+			if (*p == '=') {
+				p++;
+				token = Ge;
+			}
+			else if (*p == '>') {
+				p++;
+				token = Shr;
+			}
+			else {
+				token = Gt;
+			}
+			return;
 		case '|':
+			if (*p == '|') {
+				p++;
+				token = Lor;
+			}
+			else {
+				token = Or;
+			}
+			return;
 		case '&':
+			if (*p == '&') {
+				p++;
+				token = Lan;
+			}
+			else {
+				token = And;
+			}
+			return;
 		case '^':
+			token = Xor;
+			return;
 		case '[':
+			token = Bracket;
+			return;
+		case '?':
+			token = Cond;
+			return;
 		case '~':
 		case ';':
 		case '{':
@@ -195,7 +351,7 @@ void next() {
 		case ',':
 		case ':':
 		default:
-			break;
+			return;
 		}
 	}
 }
@@ -208,11 +364,44 @@ void expr() {
 
 }
 
+
+/* 
+ *  parse_global_decl() - parse global variables and functions
+ * 
+ * It should parse the source code matching the following form.
+ * 	<type> [*] <id>[ ; | (...) {...} ]
+ * 
+ * Ex:
+ * variables:
+ *	 	int a;
+ *		int *b;
+ *		char **c;
+ *
+ * functions:
+ *		void foo() {...}
+ *		int func(int k) {...}
+ *
+ *		after getting '(', it should start ...
+ *			parse_func_params()
+ *			parse_func_impl()
+ *				
+ * 
+ */
+void parse_global_decl() {
+	
+
+}
+
 void program() {
 	next();
+	while (token > 0) {
+		parse_global_decl();
+	}
 }
 
 int main(int argc, char **argv) {
+
+	dump_ir = 0;
 
 	--argc; ++argv;
 	if (argc > 0 && !strcmp(*argv, "--dump-ir")) {
@@ -275,7 +464,8 @@ int main(int argc, char **argv) {
 		src[i] = 0;
 		close(fd);
 		last_p = p = src;
-		
+		line = 1;
+
 		program();
 
 		--argc; ++argv;
