@@ -9,13 +9,19 @@
 // Compiler flags
 int dump_ir;
 
+// For memory layout of a process
+int *stack, *stack_p;
+char *data, *data_p;
+int *text, *text_p;
 
-// Necessary variables
+// Necessary variables to parse source code
 int pool_size;
 char *src;
 int line;
 char token;
 int token_num;
+int decl_type;
+int expr_type;
 
 char *src;
 char *p;
@@ -101,19 +107,18 @@ struct idents {
 } *id, *sym;
 
 void err_exit(char *errstr) {
-	fprintf(stderr, "%s", errstr);
+	fprintf(stderr, "%d: %s", line, errstr);
 	exit(1);
 }
-
-
 
 /* 
  * next() - parse the source code and get the token type;
  */
 
 void next() {
-	char *id_parser;
 	int hash;
+	char *id_parser;
+	char *str;
 	while (token = *p) {
 		++p;
 		if ((token >= 'A' && token <= 'Z') || (token >= 'a' && token <= 'z') || (token == '_')) {
@@ -185,6 +190,7 @@ void next() {
 		}
 		else if (token == '"' || token == '\'') {
 			// parse a character or string
+			str = data_p;
 			while(*p != 0 && *p != token) {
 				token_num = *p++;
 				if (token_num == '\\') {
@@ -202,13 +208,13 @@ void next() {
 					}
 				}
 				if (token == '"') {
-					// TODO: copy to .data segment
+					*data_p++ = token_num;
 				}
 			}
 			p++;
 
 			if (token == '"') {
-				// TODO: assign the address of the string to token_num
+				token_num = (int) str;
 			}
 			else {
 				token = Num;
@@ -356,6 +362,16 @@ void next() {
 	}
 }
 
+void match_token(int expected) {
+	if (token = expected) {
+		next();
+	}
+	else {
+		fprintf(stderr, "%d: expected token: %d\n", line, expected);
+		exit(-1);
+	}
+}
+
 void stmt() {
 
 }
@@ -364,32 +380,85 @@ void expr() {
 
 }
 
-
 /* 
- *  parse_global_decl() - parse global variables and functions
+ * parse_global_decl() - parse global variables, functions and composite data types
  * 
  * It should parse the source code matching the following form.
- * 	<type> [*] <id>[ ; | (...) {...} ]
+ * 	(...) means function parameters.
+ *	{...} means function definition or composite data types definition.
+ *
  * 
- * Ex:
- * variables:
- *	 	int a;
+ * variable:
+ * 	<type> [*] <id> [ = (<expr> | {...})] ;
+ *
+ *		int a = 10;
+ *		int aa;
  *		int *b;
  *		char **c;
  *
- * functions:
- *		void foo() {...}
+ * function:
+ * 	<type> [*] <id> (...) {...}
+ *
+ * 		void foo() {...}
  *		int func(int k) {...}
  *
  *		after getting '(', it should start ...
  *			parse_func_params()
- *			parse_func_impl()
+ *			parse_func_def()
  *				
+ * enum:
+ * 	enum [<id>] {...} ;
  * 
+ * struct:
+ *	struct <id> {...} ;
+ *
+ * union:
+ *	union <id> {...} ;
  */
 void parse_global_decl() {
-	
+	int type;
+	int i;
 
+	decl_type = INT;
+
+	if (token == Enum) {
+		match_token(Enum);
+		if (token != '{') {
+			match_token(Id);
+		}
+		if (token == '{') {
+			next();
+			i = 0;
+			while(token != '}') {
+				if (token != Id) {
+					err_exit("error - bad enum identifier\n");
+				}
+				next();
+				if (token == Assign) {
+					// TODO: parse a string literal or an expression.
+					next();
+					// expr()
+					if (token != Num) {
+						err_exit("error - bad enum initializer\n");
+					}
+					i = token_num;
+					next();
+				}
+				id->class = Num;
+				id->type = INT;
+				id->val = i++;
+				
+				match_token(',');
+			}
+			next();
+
+		}
+
+		match_token(';');
+		return;
+	}
+
+	next();
 }
 
 void program() {
@@ -400,6 +469,9 @@ void program() {
 }
 
 int main(int argc, char **argv) {
+
+	int i;
+	struct idents *id_main;
 
 	dump_ir = 0;
 
@@ -416,11 +488,23 @@ int main(int argc, char **argv) {
 
 	pool_size = 256 * 1024;
 	if (!(src = malloc(pool_size))) {
-		err_exit("couldn't malloc for src\n");
+		err_exit("error - couldn't malloc for source code text.\n");
 	}
 	
 	if (!(sym = malloc(pool_size))) {
-		err_exit("couldn't malloc for symbol table\n");
+		err_exit("error - couldn't malloc for symbol table.\n");
+	}
+
+	if (!(stack = malloc(pool_size))) {
+		err_exit("error - couldn't malloc for stack segment.\n");
+	}
+
+	if (!(data = malloc(pool_size))) {
+		err_exit("error - couldn't malloc for data segment.\n");
+	}
+
+	if (!(text = malloc(pool_size))) {
+		err_exit("error - couldn't malloc for text segment.\n");
 	}
 
 	memset(src, 0, pool_size);
@@ -431,19 +515,26 @@ int main(int argc, char **argv) {
 	    "open read close printf fprintf malloc memset memcmp exit";
 
 	// C Keywords
-	for (int i = Break; i < Goto; i++) {
+	for (i = Break; i < Goto; i++) {
 		next();
+		id->token = i;
+		id->class = Keyword;
 	}
 
 	// void
 	next();
+	id->token = Char;
 
 	// main
 	next();
+	id_main = id;
 
 	// Syscalls / C std funcs
 	for (int i = OPEN; i < EXIT; i++) {
 		next();
+		id->type = INT;
+		id->class = Syscall;
+		id->val = i;
 	}
 	printf("-----------------------------\n");
 
@@ -451,15 +542,17 @@ int main(int argc, char **argv) {
 		int fd = open(*argv, 0);
 		int i = 0;
 		if (fd < 0) {
-			fprintf(stderr, "err: for source file %s\n", *argv);
+			fprintf(stderr, "error - for source file %s\n", *argv);
 			err_exit("couldn't open the source file.\n");
 		}
 
 		if ((i = read(fd, src, pool_size - 1)) <= 0) {
-			fprintf(stderr, "err: for source file %s\n", *argv);
-			err_exit("err: unable to read the source file\n");
+			fprintf(stderr, "error - for source file %s\n", *argv);
+			err_exit("unable to read the source file\n");
 		}
-		memset(src, 0, pool_size);
+		memset(stack, 0, pool_size);
+		memset(data, 0, pool_size);
+		memset(text, 0, pool_size);
 
 		src[i] = 0;
 		close(fd);
@@ -473,6 +566,9 @@ int main(int argc, char **argv) {
 	}
 	free(src);
 	free(sym);
+	free(stack);
+	free(data);
+	free(text);
 
 	return 0;
 }
