@@ -20,15 +20,14 @@ The purpose of ```maxcc``` is wanting to be a cross compiler, which can support 
 
 The current targets of ```maxcc``` are listed as following.
 * Implement **Intermediate Representation (IR)**
-* Generate 32-bit architectures
+* Generate 32-bit architectures assembly first, the preferred ISAs are listed as following
+	* RISC-V (1st)
+	* x86_64 (2nd)
+	* ARM (3rd)
 * Support basic C syntax
 	* basic statements and expression operators
 	* basic data types
-	* partial C89 and C99 features
-* Produce assembly first
-	* RISC-V
-	* ARM
-	* x86_64
+	* partial C89, C99, C23 features
 
 ## Advanced targets
 * Self-hosting (self-compiling)
