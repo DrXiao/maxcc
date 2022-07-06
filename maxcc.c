@@ -9,18 +9,23 @@
 // Compiler flags
 int dump_ir;
 
-// For memory layout of a process
+// Memory layout of a process
 int *stack, *stack_p;
 char *data, *data_p;
 int *text, *text_p;
+
+// Registers and cycle of a CPU
+int *pc, *bp, *sp, ax, cycle;
+int idx_of_bp;
 
 // Necessary variables to parse source code
 int pool_size;
 char *src;
 int line;
-char token;
+int token;
 int token_num;
-int decl_type;
+int *type_size;
+int type_new;
 int expr_type;
 
 char *src;
@@ -94,7 +99,7 @@ enum {
 
 enum {CHAR, INT, PTR = 256, PTR2 = 512};
 
-struct idents {
+struct ident {
 	int token;
 	int hash;
 	char *name;
@@ -104,7 +109,15 @@ struct idents {
 	int hclass;
 	int htype;
 	int hval;
+	int struct_type;
 } *id, *sym;
+
+struct struct_member {
+	struct ident *id;
+	int offset;
+	int type;
+	struct struct_member *next;
+} **members;
 
 void err_exit(char *errstr) {
 	fprintf(stderr, "%d: %s", line, errstr);
@@ -114,7 +127,6 @@ void err_exit(char *errstr) {
 /* 
  * next() - parse the source code and get the token type;
  */
-
 void next() {
 	int hash;
 	char *id_parser;
@@ -125,13 +137,13 @@ void next() {
 			// parse identifiers
 			id_parser = p - 1;
 			hash = token;
-			while ((token >= '0' && token <= '9') || (token >= 'A' && token <= 'Z') || (token >= 'a' && token <= 'z') || (token == '_')) {
-				token = *p;
-				p++;
+			token = *p;
+			while ((token >= 'A' && token <= 'Z') || (token >= 'a' && token <= 'z') || (token >= '0' && token <= '9') || (token == '_')) {
 				hash = hash * 147 + token;
+				p++;
+				token = *p;
 			}
 			hash = (hash << 6) + (p - id_parser);
-
 			for (id = sym; id->token; id++) {
 				if (hash == id->hash && !memcmp(id->name, id_parser, p - id_parser)) {
 					token = id->token;
@@ -347,6 +359,10 @@ void next() {
 		case '?':
 			token = Cond;
 			return;
+		case ' ':
+		case '\t':
+		case '\r':
+			break;
 		case '~':
 		case ';':
 		case '{':
@@ -372,8 +388,26 @@ void match_token(int expected) {
 	}
 }
 
-void stmt() {
+void stmt(int target) {
+	int type;
 
+	switch (target) {
+	case Func:
+		// parse local variables and other statements.
+	case If:
+	case While:
+	case DoWhile:
+	case Switch:
+	case Case:
+	case Break:
+	case Continue:
+	case Default:
+	case Return:
+	case For:
+//	case Goto:
+	default:
+		break;
+	}
 }
 
 void expr() {
@@ -416,13 +450,20 @@ void expr() {
  *	union <id> {...} ;
  */
 void parse_global_decl() {
-	int type;
 	int i;
+	int type;
+	int params;
+	int idx_of_locvar;
+	int decl_type;
+	int member_type;
+	int struct_token;
+	struct struct_member *m;
 
 	decl_type = INT;
 
-	if (token == Enum) {
-		match_token(Enum);
+	switch (token) {
+	case Enum:
+		next();
 		if (token != '{') {
 			match_token(Id);
 		}
@@ -456,8 +497,179 @@ void parse_global_decl() {
 
 		match_token(';');
 		return;
-	}
+	case Int:
+	case Char:
+	case Struct:
+	case Union:
+		type = token;
+		switch(token) {
+		case Struct:
+		case Union:
+			i = 0;
+			struct_token = token;
+			next();
+			match_token(Id);
+			if (!id->struct_type)
+				id->struct_type = type_new++;
+			type = type_new;
+			decl_type = type_new;
+			if (token == '{') {
+				type_size[decl_type] = 0;
+				i = 0;
+				if (members[decl_type])
+					err_exit("error - duplicate structure definition\n");
+				while(token != '}') {
+					next();
+					member_type = INT;
+					switch (token) {
+					case Int:
+						next();
+						break;
+					case Char:
+						next();
+						member_type = CHAR;
+						break;
+					case Struct:
+					case Union:
+						next();
+						if (token != Id)
+							err_exit("error - bad struct/union declaration\n");
+						member_type = id->struct_type;
+						next();
+						break;
+					}
+					
+					while (token != ';') {
+						expr_type = member_type;
+						while (token == Mul) {
+							expr_type += PTR;
+							next();
+						}
+		
+						if (token != Id) {
+							err_exit("error - expected identifier\n");
+						}
+						
+						m = malloc(sizeof(struct struct_member));
+						m->id = id;
+						m->offset = i;
+						m->type = expr_type;
+						m->next = members[decl_type];
+						members[decl_type] = m;
+						i = i + (decl_type >= PTR) ? sizeof(int) : type_size[decl_type];
+						i = (i + 3) & -4;
+						if (struct_token == Union) {
+							if (i > type_size[decl_type])
+								type_size[decl_type] = i;
+							i = 0;
+						}
+						next();
+						if (token == ',')
+							next();
+					}
+					next();
+				}
+				match_token('}');
+				if (struct_token != Union)
+					type_size[decl_type] = i;
+			}
+			break;
+		case Int:
+		case Char:
+			decl_type = (token == Int) ? INT : CHAR;
+			next();
+			break;
+		}
 
+		if ((type == Int || type == Char) && token == ';') {
+			err_exit("bad global declaration\n");
+		}
+		
+		while (token != ';' && token != '}') {
+			expr_type = decl_type;
+			while (token == Mul) {
+				expr_type = expr_type + PTR;
+				next();
+			}
+
+			if (token != Id) {
+				err_exit("error - expected identifier\n");
+			}
+			next();
+
+			if (token == '(') {
+				id->class = Func;
+				// TODO: parse function parameters and definition
+				// parse parameters
+				while (token != ')') {
+					next();
+					type = INT;
+					switch (token) {
+					case Int:
+						next();
+						break;
+					case Char:
+						next();
+						type = Char;
+						break;
+					case Struct:
+					case Union:
+						next();
+						if (token != Id)
+							err_exit("error - bad struct type for parameter\n");
+						type = id->struct_type;
+						next();
+						break;
+					}
+					
+					while (token == Mul) {
+						type = type + PTR;
+						next();
+					}
+					
+					if (token != Id) {
+						err_exit("error - bad parameter declaration\n");
+					}
+					if (id->class == Local) {
+						err_exit("error - duplicate parameter declaration\n");
+					}
+
+					match_token(Id);
+
+					id->hclass = id->class;
+					id->class = Local;
+
+					id->htype = id->type;
+					id->type = type;
+					
+					id->hval = id->val;
+					id->val = params++;
+
+					if (token == ',')
+						match_token(',');
+
+				}
+				idx_of_bp = params + 1;
+				next();
+				match_token('{');
+					
+				stmt(Func);
+				
+				match_token('}');
+			}
+			else {
+				id->class = Global;
+				// id->val = (int)(data_p);
+				if (expr_type < PTR)
+					data_p = data_p + type_size[decl_type];
+				else
+					data_p = data_p + sizeof(int);
+				if (token == ',')
+					match_token(',');
+
+			}
+		}
+	}
 	next();
 }
 
@@ -471,9 +683,10 @@ void program() {
 int main(int argc, char **argv) {
 
 	int i;
-	struct idents *id_main;
+	struct ident *id_main;
 
 	dump_ir = 0;
+	type_new = 0;
 
 	--argc; ++argv;
 	if (argc > 0 && !strcmp(*argv, "--dump-ir")) {
@@ -507,8 +720,18 @@ int main(int argc, char **argv) {
 		err_exit("error - couldn't malloc for text segment.\n");
 	}
 
+	if (!(type_size = malloc(PTR * sizeof(int)))) {
+		err_exit("error - couldn't malloc for type size table\n");
+	}
+
+	if (!(members = malloc(PTR * sizeof(struct ident *)))) {
+		err_exit("error - couldn't malloc for struct member table\n");
+	}
+
 	memset(src, 0, pool_size);
 	memset(sym, 0, pool_size);
+	memset(type_size, 0, PTR * sizeof(int));
+	memset(members, 0, PTR * sizeof(struct ident *));
 
 	p = "break continue case char default else enum if int return "
 	    "sizeof struct union switch for while do goto void main "
@@ -530,13 +753,15 @@ int main(int argc, char **argv) {
 	id_main = id;
 
 	// Syscalls / C std funcs
-	for (int i = OPEN; i < EXIT; i++) {
+	for (i = OPEN; i < EXIT; i++) {
 		next();
 		id->type = INT;
 		id->class = Syscall;
 		id->val = i;
 	}
-	printf("-----------------------------\n");
+
+	type_size[type_new++] = sizeof(char);
+	type_size[type_new++] = sizeof(int);
 
 	while (argc) {
 		int fd = open(*argv, 0);
@@ -562,13 +787,15 @@ int main(int argc, char **argv) {
 		program();
 
 		--argc; ++argv;
-
 	}
+
 	free(src);
 	free(sym);
 	free(stack);
 	free(data);
 	free(text);
+	free(type_size);
+	free(members);
 
 	return 0;
 }
