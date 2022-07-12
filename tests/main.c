@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+"hello";
 0b0010;
 0xabcd;
 

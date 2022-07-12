@@ -12,7 +12,7 @@ int dump_ir;
 // Memory layout of a process
 int *stack, *stack_p;
 char *data, *data_p;
-int *text, *text_p;
+int *old_text, *text, *text_p;
 
 // Registers and cycle of a CPU
 int *pc, *bp, *sp, ax, cycle;
@@ -28,9 +28,15 @@ int *type_size;
 int type_new;
 int expr_type;
 
+int *case_addr, *default_addr, *break_addr, *continue_addr;
+int switch_cnt;
+int break_cnt;
+int continue_cnt;
+
 char *src;
 char *p;
 char *last_p;
+
 
 // Supported tokens and classes
 enum {
@@ -379,7 +385,7 @@ void next() {
 }
 
 void match_token(int expected) {
-	if (token = expected) {
+	if (token == expected) {
 		next();
 	}
 	else {
@@ -388,30 +394,148 @@ void match_token(int expected) {
 	}
 }
 
+
+void expr(int level) {
+
+}
+
+/* 
+ * stmt() - parse statements in any blocks
+ * 
+ * 
+ * 
+ */
 void stmt(int target) {
 	int type;
 
 	switch (target) {
 	case Func:
+		match_token('{');
 		// parse local variables and other statements.
+		while (token == Int || token == Char || token == Struct || token == Union) {
+			type = INT;
+			while (token != ';') {
+	
+				switch(token) {
+					case Int:
+						next();
+						break;
+					case Char:
+						type = CHAR;
+						next();
+						break;
+					case Struct:
+					case Union:
+						next();
+						if (token != Id) 
+							err_exit("error - bad struct/union declaration\n");
+						type = id->struct_type;
+						next();
+						break;
+				}
+	
+				if (token != Id) 
+					err_exit("error - expected identifier\n");
+				
+				next();
+				if (token == ',')
+					next();
+	
+			}
+			next();
+		}
+		while (token != '}') {
+			stmt(token);
+		}
+		break;
 	case If:
 	case While:
+		next();
+		match_token('(');
+		// parse condition
+		match_token(')');
+		if (token == '{') {
+			next();
+			while (token != '}') {
+				stmt(token);
+			}
+		}
+		else
+			stmt(token);
+		break;
 	case DoWhile:
+		next();
+		match_token('{');
+		// parse statments
+		while (token != '}') {
+			stmt(token);
+		}
+		match_token('}');
+		match_token(While);
+		match_token('(');
+		// parse condition
+		match_token(')');	
+		match_token(';');
+		break;
 	case Switch:
+		next();
+		match_token('(');
+		// parse target variable
+		match_token(')');
+		match_token('{');
+		while (token != '}') {
+			stmt(token);
+		}
+		match_token('}');
+		break;
 	case Case:
+		next();
+		match_token('(');
+		
+		match_token(')');
+		break;
 	case Break:
+		next();
+		match_token(';');
+		break;
 	case Continue:
+		next();
+		match_token(';');
+		break;
 	case Default:
+		next();
+		break;
 	case Return:
+		if (token != ';') {
+			expr(Assign);
+		}
+		match_token(';');
+		break;
 	case For:
+		next();
+		match_token('(');
+		stmt(Assign);
+		match_token(';');
+		stmt(Assign);
+		match_token(';');
+		stmt(Assign);
+		match_token(')');
+		if (token == '{') {
+			next();
+			while (token != '}') {
+				stmt(token);
+			}
+		}
+		else
+			stmt(token);
+		break;
 //	case Goto:
+		break;
 	default:
+		expr(Assign);
+		next();
 		break;
 	}
-}
-
-void expr() {
-
 }
 
 /* 
@@ -437,8 +561,8 @@ void expr() {
  *		int func(int k) {...}
  *
  *		after getting '(', it should start ...
- *			parse_func_params()
- *			parse_func_def()
+ *			1. parse function parameters.
+ *			2. parse function definition. (local variables and statements)
  *				
  * enum:
  * 	enum [<id>] {...} ;
@@ -651,11 +775,26 @@ void parse_global_decl() {
 				}
 				idx_of_bp = params + 1;
 				next();
-				match_token('{');
-					
-				stmt(Func);
+
+				old_text = text_p;
 				
-				match_token('}');
+				stmt(Func);
+				id = sym;
+
+				// clear id table for local variable and label
+				while (id->token) {
+					if (id->class == Local) {
+						id->class = id->hclass;
+						id->type = id->htype;
+						id->val = id->hval;
+					}
+					else if (id->class == Label) {
+						id->class = 0;
+						id->type = 0;
+						id->val = 0;
+					}
+					id++;
+				}
 			}
 			else {
 				id->class = Global;
@@ -708,15 +847,15 @@ int main(int argc, char **argv) {
 		err_exit("error - couldn't malloc for symbol table.\n");
 	}
 
-	if (!(stack = malloc(pool_size))) {
+	if (!(stack = stack_p = malloc(pool_size))) {
 		err_exit("error - couldn't malloc for stack segment.\n");
 	}
 
-	if (!(data = malloc(pool_size))) {
+	if (!(data = data_p = malloc(pool_size))) {
 		err_exit("error - couldn't malloc for data segment.\n");
 	}
 
-	if (!(text = malloc(pool_size))) {
+	if (!(text = text_p = malloc(pool_size))) {
 		err_exit("error - couldn't malloc for text segment.\n");
 	}
 
