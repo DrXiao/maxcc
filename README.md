@@ -36,3 +36,13 @@ The current targets of ```maxcc``` are listed as following.
 	* ELF format
 * Support 64-bit architectures
 * Optimization
+
+## Build and Run
+* Generate the binary executable ```maxcc```
+```
+$ make
+```
+* Compile the source code by ```maxcc```
+```
+$ ./maxcc [--dump-ir] <source file>
+```
