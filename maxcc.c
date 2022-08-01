@@ -33,10 +33,10 @@ int switch_cnt;
 int break_cnt;
 int continue_cnt;
 
-char *src;
-char *p;
-char *last_p;
-
+char *p, *last_p;
+int *ast_ptr;
+int local_var_offset;
+int local_var_depth;
 
 // Supported tokens and classes
 enum {
@@ -389,14 +389,261 @@ void match_token(int expected) {
 		next();
 	}
 	else {
-		fprintf(stderr, "%d: expected token: %d\n", line, expected);
+		fprintf(stderr, "%d: expected token: %c\n", line, expected);
 		exit(-1);
 	}
 }
 
 
 void expr(int level) {
+	int old_token;
+	struct ident *d;
+	struct struct_member *sm;
 
+	int params_cnt, *params_b;
+	int name_len;
+	char ch;
+
+	int type, *old_ast_ptr;
+	int size;
+
+	switch(token) {
+	case '\0': 
+		err_exit("error - unexpected EOF in an expression\n");
+	case Num:
+		*--ast_ptr = token_num;
+		*--ast_ptr = Num;
+		next();
+		expr_type = INT;
+		break;
+	case '"':
+		*--ast_ptr = token_num;
+		*--ast_ptr = Num;
+		next();
+		while (token == '"')
+			next();
+		data_p = (char *) (((int) data_p + sizeof(int)) & (-sizeof(int)));
+		expr_type = PTR;
+		break;
+	case Sizeof:
+		next();
+		match_token('(');
+		next();
+		expr_type = INT;
+		switch(token) {
+		case Int: 
+			next();
+			break;
+		case Char:
+			next();
+			expr_type = CHAR;
+			break;
+		case Struct:
+		case Union:
+			next();
+			if (token != Id) 
+				err_exit("error - expected identifier");
+			expr_type = id->struct_type;
+			next();
+			break;
+		}
+		while (token == Mul) {
+			next();
+			expr_type += PTR;
+		}
+		match_token(')');
+		next();
+		*--ast_ptr = expr_type >= PTR ? sizeof(int) : type_size[expr_type];
+		*--ast_ptr = Num;
+		expr_type = INT;
+		break;
+	case Id:
+		d = id;
+		next();
+
+		if (token == '(') {
+			if (d->class < Func || d->class > Main) {
+				if (d->class != 0)
+					err_exit("error - bad function call\n");
+				name_len = d->hash & 0x3f;
+				ch = d->name[name_len];
+				d->name[name_len] = 0;
+				d->val = 0; // should be function address
+				d->name[name_len] = ch;
+				d->class = Syscall;
+				d->type = INT;
+			}
+			next();
+			params_cnt = 0;
+			params_b = 0;
+			while (token != ')') {
+				expr(Assign);
+				*--ast_ptr = (int) params_b;
+				params_b = ast_ptr;
+				++params_cnt;
+				if (token == ',') {
+					next();
+					if (token == ')')
+						err_exit("error - unexpected comma in function call\n");
+				}
+				else if (token != ')') {
+					err_exit("error - missing comma in function call\n");
+
+				}
+			}
+			next();
+			*--ast_ptr = params_cnt;
+			*--ast_ptr = d->val;
+			*--ast_ptr = (int) params_b;
+			*--ast_ptr = d->class;
+			expr_type = d->type;
+		}
+		else if (d->class == Num) {
+			*--ast_ptr = d->val;
+			*--ast_ptr = Num;
+			expr_type = INT;
+		}
+		else {
+			switch(d->class) {
+			case Local:
+				*--ast_ptr = d->val;
+				*--ast_ptr = Local;
+				break;
+			case Global:
+				*--ast_ptr = d->val;
+				*--ast_ptr = Num;
+				break;
+			default:
+				err_exit("error - undefined variable\n");			
+			}
+			*--ast_ptr = expr_type = d->type;
+			*--ast_ptr = Load;
+		}
+		break;
+	case '(':
+	case Mul:
+	case And:
+	case '!':
+	case '~':
+	case Add:
+	case Sub:
+	case Div:
+	case Mod:
+		break;
+	case Inc:
+	case Dec:
+		break;
+	default:
+		err_exit("error - bad expression\n");
+	}
+
+	while (token >= level) {
+		type = expr_type;
+		old_ast_ptr = ast_ptr;
+		switch(token) {
+		case Assign:
+			next();
+			if (*ast_ptr != Load)
+				err_exit("error - bad lvalue in assignment");
+			expr(Assign);
+			*--ast_ptr = (int) (old_ast_ptr + 2);
+			*--ast_ptr = expr_type = type;
+			*--ast_ptr = Assign;
+			break;
+		case Cond:
+		case Lor:
+		case Lan:
+		case Or:
+		case Xor:
+		case And:
+		case Eq:
+		case Ne:
+		case Lt:
+		case Gt:
+		case Le:
+		case Ge:
+		case Shl:
+		case Shr:
+			break;
+		case Add:
+			next();
+			expr(Mul);
+			size = (expr_type = type) >= PTR2 ? sizeof(int) :
+							expr_type >= PTR ? type_size[expr_type - PTR] : 1;
+			if (*ast_ptr == Num)
+				ast_ptr[1] = ast_ptr[1] * size;
+			if (*ast_ptr == Num && *old_ast_ptr == Num)
+				ast_ptr[1] = ast_ptr[1] + old_ast_ptr[1];
+			else {
+				*--ast_ptr = (int) old_ast_ptr;
+				*--ast_ptr = Add;
+			}
+			break;
+		case Sub:
+			next();
+			expr(Mul);
+			size = type >= PTR2 ? sizeof(int) : type >= PTR ? type_size[type = PTR] : 1;
+			if (size > 1 && *ast_ptr == Num) {
+				*--ast_ptr = size;
+				*--ast_ptr = Num;
+				--ast_ptr;
+				*ast_ptr = (int) (ast_ptr + 3);
+				*--ast_ptr = Mul;
+			}
+			if (*ast_ptr == Num && *old_ast_ptr == Num)
+				ast_ptr[1] = old_ast_ptr[1] - ast_ptr[1];
+			else {
+				*--ast_ptr = (int) old_ast_ptr;
+				*--ast_ptr = Sub;
+				if (type == expr_type && size > 1) {
+					switch(size) {
+					case 4:
+						*--ast_ptr = 2;
+						*--ast_ptr = Num;
+						--ast_ptr;
+						*ast_ptr = (int) (ast_ptr + 3);
+						*--ast_ptr = Shr;
+						break;
+					default:
+						*--ast_ptr = size;
+						*--ast_ptr = Num;
+						--ast_ptr;
+						*ast_ptr = (int) (ast_ptr + 3);
+						*--ast_ptr = Sub;
+					}
+				}
+			}
+			break;
+		case Mul:
+			next();
+			expr(Inc);
+			if (*ast_ptr == Num && *old_ast_ptr == Num) {
+				ast_ptr[1] = ast_ptr[1] * old_ast_ptr[1];
+			}
+			else {
+				*--ast_ptr = (int) old_ast_ptr;
+				/*
+				if (ast_ptr[1] == Num && ast_ptr[2] > 0 && (ast_ptr[2] & (ast_ptr[2] - 1)) == 0) {
+					ast_ptr[2]; // popcount;
+				}
+				else
+				*/
+					*--ast_ptr = Mul;
+			}
+			expr_type = INT;
+			break;
+		case Inc:
+		case Dec:
+			break;
+		case Div:
+		case Mod:
+		case Dot:
+		case Arrow:
+		case Bracket:
+		default:
+			break;
+		}
+	}
 }
 
 /* 
@@ -410,6 +657,7 @@ void stmt(int target) {
 
 	switch (target) {
 	case Func:
+		local_var_depth = idx_of_bp;
 		match_token('{');
 		// parse local variables and other statements.
 		while (token == Int || token == Char || token == Struct || token == Union) {
@@ -436,17 +684,32 @@ void stmt(int target) {
 	
 				if (token != Id) 
 					err_exit("error - expected identifier\n");
-				
 				next();
+
+				id->hclass = id->class;
+				id->class = Local;
+				
+				id->htype = id->type;
+				id->type = type;
+
+				id->hval = id->val;
+				id->val = ++local_var_depth;
+
 				if (token == ',')
 					next();
 	
 			}
 			next();
 		}
+
+		*++text_p = ENT;
+		*++text_p = local_var_depth - idx_of_bp;
+
 		while (token != '}') {
 			stmt(token);
 		}
+
+		*++text_p = LEV;
 		break;
 	case If:
 	case While:
@@ -506,6 +769,7 @@ void stmt(int target) {
 		next();
 		break;
 	case Return:
+		next();
 		if (token != ';') {
 			expr(Assign);
 		}
@@ -589,7 +853,8 @@ void parse_global_decl() {
 	case Enum:
 		next();
 		if (token != '{') {
-			match_token(Id);
+			if (token != Id) 
+				err_exit("error - expected identifier");
 		}
 		if (token == '{') {
 			next();
@@ -632,7 +897,8 @@ void parse_global_decl() {
 			i = 0;
 			struct_token = token;
 			next();
-			match_token(Id);
+			if (token != Id) 
+				err_exit("error - expected identifier");
 			if (!id->struct_type)
 				id->struct_type = type_new++;
 			type = type_new;
@@ -723,10 +989,11 @@ void parse_global_decl() {
 
 			if (token == '(') {
 				id->class = Func;
+				id->val = (int) (text_p + 1);
 				// TODO: parse function parameters and definition
 				// parse parameters
+				next();
 				while (token != ')') {
-					next();
 					type = INT;
 					switch (token) {
 					case Int:
@@ -750,15 +1017,17 @@ void parse_global_decl() {
 						type = type + PTR;
 						next();
 					}
-					
+
 					if (token != Id) {
 						err_exit("error - bad parameter declaration\n");
 					}
+
 					if (id->class == Local) {
 						err_exit("error - duplicate parameter declaration\n");
 					}
 
-					match_token(Id);
+					if (token != Id) 
+						err_exit("error - expected identifier");
 
 					id->hclass = id->class;
 					id->class = Local;
@@ -769,9 +1038,9 @@ void parse_global_decl() {
 					id->hval = id->val;
 					id->val = params++;
 
+					next();
 					if (token == ',')
 						match_token(',');
-
 				}
 				idx_of_bp = params + 1;
 				next();
@@ -798,7 +1067,7 @@ void parse_global_decl() {
 			}
 			else {
 				id->class = Global;
-				// id->val = (int)(data_p);
+				id->val = (int)(data_p);
 				if (expr_type < PTR)
 					data_p = data_p + type_size[decl_type];
 				else
@@ -821,6 +1090,7 @@ void program() {
 
 int main(int argc, char **argv) {
 
+	int *ast;
 	int i;
 	struct ident *id_main;
 
@@ -867,10 +1137,17 @@ int main(int argc, char **argv) {
 		err_exit("error - couldn't malloc for struct member table\n");
 	}
 
+	if (!(ast = malloc(pool_size))) {
+		err_exit("error - couldn;t malloc for abstract syntax tree\n");
+	}
+
 	memset(src, 0, pool_size);
 	memset(sym, 0, pool_size);
 	memset(type_size, 0, PTR * sizeof(int));
 	memset(members, 0, PTR * sizeof(struct ident *));
+	memset(ast, 0, pool_size);
+
+	ast_ptr = (int *)((int)ast + pool_size);
 
 	p = "break continue case char default else enum if int return "
 	    "sizeof struct union switch for while do goto void main "
